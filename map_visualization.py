@@ -1,13 +1,8 @@
-# map_visualization.py
-"""
-Map visualization wrapper for TBRGS
-Uses your existing map.py for SCATS network display
-"""
+# map_visualization.py - tkintermapview wrapper for the SCATS network
 
 import math
 from config import MAP_TILE_SERVER, MAP_ZOOM_LEVEL, MAP_LOCATE_ZOOM
 
-# Import from your existing map.py
 from map import (
     NODE_CONNECTIONS,
     NODE_COLOURS,
@@ -15,7 +10,6 @@ from map import (
     draw_edges
 )
 
-# Try to import tkintermapview
 try:
     import tkintermapview
     MAP_AVAILABLE = True
@@ -24,181 +18,162 @@ except ImportError:
 
 
 class SCATSMapViewer:
-    """
-    Wrapper for tkintermapview with SCATS network overlay
-    Uses your map.py for road connections and colors
-    """
-    
+
     def __init__(self):
-        self.map_widget = None
-        self.coords = {}          # SCATS number -> (lat, lon)
-        self.markers = {}         # SCATS number -> marker object
-        self.current_route_items = []  # Temporary route elements
-        self.is_initialized = False
-        
-    def load_coordinates(self):
-        """Load SCATS coordinates using your map.py function"""
-        sites_df = load_sites()
+        self.mapWidget = None
+        self.coords = {}
+        self.markers = {}
+        self.currentRouteItems = []
+        self.networkPaths = []
+        self.isInitialized = False
+
+    # read lat/lng for every SCATS site from the data source and store them
+    def loadCoords(self):
+        sitesDF = load_sites()
         self.coords = {
-            row['SCATS Number']: (row['LAT'], row['LNG']) 
-            for _, row in sites_df.iterrows()
+            row['SCATS Number']: (row['LAT'], row['LNG'])
+            for _, row in sitesDF.iterrows()
         }
         print(f"Loaded {len(self.coords)} SCATS sites with coordinates")
         return self.coords
-    
-    def get_available_sites(self):
-        """Return sorted list of available SCATS site numbers"""
+
+    # return a sorted list of numeric SCATS site IDs
+    def getSites(self):
         return sorted([s for s in self.coords.keys() if s.isdigit()], key=int)
-    
-    def create_map(self, parent_frame):
-        """Create the map widget"""
+
+    # spin up the map widget inside the given frame and centre it on Boroondara
+    def createMap(self, parentFrame):
         if not MAP_AVAILABLE:
             return None
-        
-        self.map_widget = tkintermapview.TkinterMapView(parent_frame, corner_radius=0)
-        self.map_widget.pack(fill='both', expand=True)
-        self.map_widget.set_tile_server(MAP_TILE_SERVER)
-        
-        # Center map on Borondara
+
+        self.mapWidget = tkintermapview.TkinterMapView(parentFrame, corner_radius=0)
+        self.mapWidget.pack(fill='both', expand=True)
+        self.mapWidget.set_tile_server(MAP_TILE_SERVER)
+
+        # centre on Boroondara
         if self.coords:
             lats = [c[0] for c in self.coords.values()]
             lngs = [c[1] for c in self.coords.values()]
-            self.map_widget.set_position(sum(lats)/len(lats), sum(lngs)/len(lngs))
-            self.map_widget.set_zoom(MAP_ZOOM_LEVEL)
-        
-        return self.map_widget
-    
-    def draw_network(self):
-        """Draw all roads and markers on the map"""
-        if not self.map_widget or not self.coords:
+            self.mapWidget.set_position(sum(lats)/len(lats), sum(lngs)/len(lngs))
+            self.mapWidget.set_zoom(MAP_ZOOM_LEVEL)
+
+        return self.mapWidget
+
+    # draw all road edges and place a marker for every SCATS site
+    def drawNetwork(self):
+        if not self.mapWidget or not self.coords:
             return
-        
-        # Draw roads using YOUR draw_edges function
-        draw_edges(self.map_widget, self.coords)
-        
-        # Draw markers using YOUR colors
+
+        self.networkPaths = draw_edges(self.mapWidget, self.coords)
+        self.network_visible = True
+
         for sid, (lat, lng) in self.coords.items():
             colour = NODE_COLOURS.get(sid, '#1a1a2e')
-            marker = self.map_widget.set_marker(
-                lat, lng, 
+            marker = self.mapWidget.set_marker(
+                lat, lng,
                 text=sid,
                 marker_color_circle=colour,
                 marker_color_outside='#ffffff',
                 font=('Arial', 10, 'bold')
             )
             self.markers[sid] = marker
-        
-        self.is_initialized = True
-    
-    def locate_site(self, site_str):
-        """Center map on a specific SCATS site"""
-        if not self.map_widget or site_str not in self.coords:
+
+        self.isInitialized = True
+
+    # pan and zoom the map to a specific SCATS site
+    def locateSite(self, siteStr):
+        if not self.mapWidget or siteStr not in self.coords:
             return False
-        
-        lat, lng = self.coords[site_str]
-        self.map_widget.set_position(lat, lng)
-        self.map_widget.set_zoom(MAP_LOCATE_ZOOM)
+        lat, lng = self.coords[siteStr]
+        self.mapWidget.set_position(lat, lng)
+        self.mapWidget.set_zoom(MAP_LOCATE_ZOOM)
         return True
-    
-    def draw_route(self, path):
-        """
-        Draw a route on the map with orange line
-        
-        Args:
-            path: List of SCATS site numbers in order
-        """
-        if not self.map_widget or len(path) < 2:
+
+    # draw the route as coloured lines and optionally highlight start/end markers
+    def drawRoute(self, path, color='#ff6f00', isBest=False):
+        if not self.mapWidget or len(path) < 2:
             return
-        
-        self.clear_route()
-        
-        # Draw route lines between consecutive nodes
+
         for i in range(len(path) - 1):
-            node1 = str(path[i])
-            node2 = str(path[i+1])
-            
+            node1, node2 = str(path[i]), str(path[i+1])
             if node1 in self.coords and node2 in self.coords:
                 lat1, lng1 = self.coords[node1]
                 lat2, lng2 = self.coords[node2]
-                
-                route_line = self.map_widget.set_path(
+                line = self.mapWidget.set_path(
                     [(lat1, lng1), (lat2, lng2)],
-                    color='#ff6f00',  # Orange
-                    width=5
+                    color=color,
+                    width=5 if isBest else 3
                 )
-                self.current_route_items.append(route_line)
-        
-        # Highlight nodes on the route
-        for i, node in enumerate(path):
-            node_str = str(node)
-            if node_str not in self.coords:
-                continue
-                
-            # Delete old marker
-            if node_str in self.markers:
+                self.currentRouteItems.append(line)
+
+        # highlight start/end markers
+        if isBest:
+            for nodeStr, markerColour, label in [
+                (str(path[0]),  '#2e7d32', f"{path[0]} [START]"),
+                (str(path[-1]), '#c62828', f"{path[-1]} [END]"),
+            ]:
+                if nodeStr not in self.coords or nodeStr not in self.markers:
+                    continue
                 try:
-                    self.markers[node_str].delete()
+                    self.markers[nodeStr].delete()
                 except:
                     pass
-            
-            # Choose color based on position
-            if i == 0:  # Origin
-                colour, text = '#2e7d32', f"🚗 {node_str}"
-            elif i == len(path) - 1:  # Destination
-                colour, text = '#c62828', f"🏁 {node_str}"
-            else:  # Waypoint
-                colour, text = '#ff6f00', node_str
-            
-            lat, lng = self.coords[node_str]
-            new_marker = self.map_widget.set_marker(
-                lat, lng, 
-                text=text,
-                marker_color_circle=colour,
-                marker_color_outside='#ffffff',
-                font=('Arial', 11, 'bold')
-            )
-            self.current_route_items.append(new_marker)
-            self.markers[node_str] = new_marker
-    
-    def clear_route(self):
-        """Clear the currently displayed route"""
-        for item in self.current_route_items:
-            try:
-                item.delete()
-            except:
-                pass
-        self.current_route_items = []
-        
-        # Redraw original markers
-        if self.is_initialized:
-            for sid, (lat, lng) in self.coords.items():
-                if sid in self.markers:
-                    try:
-                        self.markers[sid].delete()
-                    except:
-                        pass
-                
+                lat, lng = self.coords[nodeStr]
+                m = self.mapWidget.set_marker(
+                    lat, lng,
+                    text=label,
+                    marker_color_circle=markerColour,
+                    marker_color_outside='#ffffff',
+                    font=('Arial', 12, 'bold')
+                )
+                self.markers[nodeStr] = m
+                self.currentRouteItems.append((nodeStr, m))
+
+    # remove all drawn route lines and restore any markers we changed
+    def clearRoute(self):
+        highlightedNodes = set()
+        for item in self.currentRouteItems:
+            if isinstance(item, tuple):
+                nodeStr, marker = item
+                highlightedNodes.add(nodeStr)
+                try:
+                    marker.delete()
+                except:
+                    pass
+            else:
+                try:
+                    item.delete()
+                except:
+                    pass
+        self.currentRouteItems = []
+
+        # put original markers back for any nodes we highlighted
+        if self.isInitialized:
+            for sid in highlightedNodes:
+                if sid not in self.coords:
+                    continue
+                lat, lng = self.coords[sid]
                 colour = NODE_COLOURS.get(sid, '#1a1a2e')
-                self.markers[sid] = self.map_widget.set_marker(
-                    lat, lng, 
+                self.markers[sid] = self.mapWidget.set_marker(
+                    lat, lng,
                     text=sid,
                     marker_color_circle=colour,
                     marker_color_outside='#ffffff',
                     font=('Arial', 10, 'bold')
                 )
-    
-    def is_map_available(self):
-        """Check if map functionality is available"""
+
+    # check whether the tkintermapview package is installed
+    def mapAvailable(self):
         return MAP_AVAILABLE
-    
-    def get_node_connections(self):
-        """Return the road connections for graph building"""
+
+    # return the raw node connection dict from the map module
+    def getNodeConnections(self):
         return NODE_CONNECTIONS
-    
-    def get_node_colours(self):
-        """Return node colors for map display"""
+
+    # return the colour mapping for each node
+    def getNodeColours(self):
         return NODE_COLOURS
-    
-    def get_coords(self):
-        """Return coordinates dictionary"""
+
+    # return the lat/lng coordinate dict for all loaded sites
+    def getCoords(self):
         return self.coords
